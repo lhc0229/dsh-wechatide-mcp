@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { apply } from '../lib/index.js';
+import { encodePng, pngInfo } from '../lib/image.js';
 
 const TOOLS = [
   {
@@ -181,19 +185,94 @@ test('wechatide_logs builds the grep command instead of asking the model to', as
 
 test('wechatide_screenshot reports the path and states honestly that no pixels arrived', async () => {
   const { run, calls } = setup({
-    respond: () => ({
+    respond: (name) => ({
       content: [],
-      structuredContent: { success: true, path: '/tmp/dsh-shot.jpg', imageWidth: 750, imageHeight: 1334 },
+      structuredContent:
+        name === 'automation_runtime_info'
+          ? { success: false, error: 'no window' }
+          : { success: true, path: '/tmp/dsh-shot.jpg', imageWidth: 750, imageHeight: 1334 },
     }),
   });
   const result = await run('wechatide_screenshot', { waitForSelector: '.list' });
-  assert.equal(calls[0].name, 'simulator_screenshot');
-  assert.equal(calls[0].args.waitForSelector, '.list');
-  assert.equal(calls[0].args.optimize, true);
+  // 先探机型，再截图：顺序是契约的一部分
+  assert.deepEqual(calls.map((call) => call.name), ['automation_runtime_info', 'simulator_screenshot']);
+  assert.equal(calls[1].args.waitForSelector, '.list');
+  assert.equal(calls[1].args.optimize, true);
   assert.match(result.summary, /simulator_screenshot → ok/);
   assert.match(result.summary, /\/tmp\/dsh-shot\.jpg/);
+  assert.match(result.summary, /未取到机型宽高/);
   assert.match(result.summary, /no attachment service mounted/);
   assert.equal(result.image, undefined);
+});
+
+test('wechatide_screenshot normalizes pixels to the running device size', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-shot-'));
+  const shotPath = join(dir, 'raw.png');
+  try {
+    // 39×84 等比 → 目标 390 宽时高 840，需要底部补 4px
+    const data = new Uint8Array(39 * 84 * 4);
+    for (let i = 0; i < 39 * 84; i += 1) {
+      data[i * 4] = i % 256;
+      data[i * 4 + 3] = 255;
+    }
+    await writeFile(shotPath, encodePng({ width: 39, height: 84, data }));
+
+    const { run, calls } = setup({
+      respond: (name) =>
+        name === 'automation_runtime_info'
+          ? {
+              content: [],
+              structuredContent: {
+                success: true,
+                systemInfo: { result: { model: 'iPhone 12/13 (Pro)', system: 'iOS 10.0.1', screenWidth: 390, screenHeight: 844, pixelRatio: 3 } },
+              },
+            }
+          : { content: [], structuredContent: { success: true, path: shotPath, imageWidth: 39, imageHeight: 84 } },
+    });
+
+    const result = await run('wechatide_screenshot', {});
+    assert.equal(calls[1].args.optimize, false, '归一化需要无损 PNG');
+    assert.match(result.summary, /机型 iPhone 12\/13 \(Pro\) \/ iOS 10\.0\.1 390×844 @3x/);
+    assert.match(result.summary, /像素已对齐机型：39×84 → 390×844/);
+    assert.match(result.summary, /底部补 4px/);
+
+    const out = pngInfo(await readFile(join(dir, 'raw-390x844.png')));
+    assert.deepEqual({ width: out.width, height: out.height }, { width: 390, height: 844 });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test('wechatide_screenshot keeps the IDE size when matchDevice is off', async () => {
+  const { run, calls } = setup({
+    respond: (name) =>
+      name === 'automation_runtime_info'
+        ? { content: [], structuredContent: { success: true, systemInfo: { result: { model: 'iPhone X', screenWidth: 375, screenHeight: 812 } } } }
+        : { content: [], structuredContent: { success: true, path: '/tmp/dsh-shot.jpg', imageWidth: 600, imageHeight: 1300 } },
+  });
+  const result = await run('wechatide_screenshot', { matchDevice: false });
+  assert.deepEqual(calls.map((call) => call.name), ['simulator_screenshot']);
+  assert.equal(calls[0].args.optimize, true);
+  assert.doesNotMatch(result.summary, /机型/);
+});
+
+test('wechatide_screenshot falls back to the IDE file when normalization cannot decode', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'dsh-shot-'));
+  const shotPath = join(dir, 'broken.png');
+  try {
+    await writeFile(shotPath, 'not a png');
+    const { run } = setup({
+      respond: (name) =>
+        name === 'automation_runtime_info'
+          ? { content: [], structuredContent: { success: true, systemInfo: { result: { model: 'iPhone X', screenWidth: 375, screenHeight: 812 } } } }
+          : { content: [], structuredContent: { success: true, path: shotPath } },
+    });
+    const result = await run('wechatide_screenshot', {});
+    assert.match(result.summary, /未归一化/);
+    assert.match(result.summary, /broken\.png/);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 test('wechatide_connect fails loudly when the CLI cannot run', async () => {

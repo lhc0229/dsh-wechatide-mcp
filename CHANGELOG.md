@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.2.0
+
+截图尺寸对齐机型：
+
+- `wechatide_screenshot` 默认先调用 `automation_runtime_info(action=systemInfo)`
+  读模拟器当前机型的逻辑宽高，再把 IDE 输出的截图（长边钳在 1280/1300、
+  宽度按机型比例反推）重采样成机型尺寸：iPhone X → 375×812，iPhone 12/13 Pro → 390×844。
+  归一化是「等比缩放到机型宽度 + 底部补/裁 ≤3px」，不拉伸画面。
+- 新参数 `matchDevice` 与新配置 `matchDevice`（默认 `true`）：
+  置 `false` 时保留 IDE 原始尺寸，行为与 0.1.x 一致。
+- 归一化需要无损输入，因此开启时强制 `optimize=false`（PNG），
+  输出与 IDE 原图分开落盘（IDE 原图保留，便于对照）。
+- 新增 `lib/image.js`：零依赖 PNG 编解码（8 bit，颜色类型 0/2/4/6，非隔行）
+  + Lanczos3 缩放 + 机型尺寸对齐 + systemInfo 解析；`package.json` 增加 `./image` 导出。
+- 降级路径明确：机型探测失败 → 保持 IDE 尺寸并说明原因；
+  截图比例与机型差超 3%（例如带工具条的长图）→ 保留等比结果并如实报告；
+  PNG 解码失败 → 回退到 IDE 原图。
+- 测试：新增 `test/image.test.js`，并在 `test/index.test.js` 覆盖
+  探测→截图→归一化的调用顺序、`matchDevice=false`、解码失败降级。
+- 文档：README 新增「前提：小程序 AppID 必须有效」——正式 AppID 与本账号测试号 AppID
+  都可用，空值 / 游客模式 / 他人 AppID 会让截图、自动化、预览、上传全部失败。
+
 ## 0.1.1
 
 跨平台修正（Windows）：

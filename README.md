@@ -27,6 +27,7 @@
 - **诚实的失败**：IDE 的业务错误、Schema 校验报告、未授权状态都渲染成「一句结论 + 下一步动作」。
 - **输出有界**：单条结果默认截断到 6 KB；`structuredContent` 与重复的文本块只取一份。
 - **截图按路由能力附加**：支持图像输入的路由附真实图像块（每会话预算 + 同画面去重），纯文本路由明确告知像素不在上下文里。
+- **截图对齐机型尺寸**：IDE 只给「长边钳到 1280/1300、宽度按机型比例反推」的图（iPhone X → 600×1300）。插件先读 `automation_runtime_info` 拿到机型逻辑宽高，再把截图重采样成 **375×812 / 390×844**，输出像素与机型一致；比例差超 3% 时如实降级，不硬凑。
 - **零运行时依赖**：只用 Node 内置模块；3 个宿主包为可选 peer，由 DSH 提供。
 
 ## 环境要求
@@ -37,6 +38,30 @@
 | DeepSeek Harness | 需提供 `@deepseek-ai/dsh-tools`、`@deepseek-ai/schemastery`、`@deepseek-ai/dsh-attachment`（可选 peer，宿主注入） |
 | 微信开发者工具 | 提供 `wechatide mcp` 子命令的版本（`wechatide-skill ≥ 0.3`） |
 | 操作系统 | macOS 已实机验证；Windows 按目录布局实现但未实机验证；Linux 未验证 |
+| **小程序 AppID** | **必须是有效值**（正式 AppID 或本账号的测试号 AppID）；空值、游客模式、他人 AppID 一律不可用 |
+
+### 前提：小程序 AppID 必须有效
+
+**这条不满足，后面所有步骤都会以各种看似无关的方式失败。**
+本插件的每个动作（开窗、编译、截图、页面自动化、预览、上传、云开发）都跑在 IDE 的项目运行时上，
+而 IDE 只对**当前登录微信号有权访问的 AppID** 提供完整运行时。所以先确认这一条，再排查别的：
+
+| AppID 情形 | 结果 |
+|---|---|
+| ✅ 正式 AppID，且当前微信号是该小程序的开发者/管理员 | 全部能力可用 |
+| ✅ 测试号 AppID（IDE 里生成的「测试号」） | 本地开发足够用：编译、截图、自动化、预览都正常 |
+| ❌ `project.config.json` 里 `appid` 为空 / 游客模式（`touristappid`） | 部分能力直接不可用 |
+| ❌ 别人的 AppID（你不是开发者） | 报 `APPID_ERROR：登录用户不是该小程序的开发者`，截图 / 自动化 / 上传全部失败 |
+| ❌ AppID 写错、不存在 | 报 `不存在此 AppID` |
+
+确认方式：
+
+```bash
+jq -r .appid project.config.json   # 必须是一串非空的 wx 开头 AppID
+```
+
+测试号在 IDE 的「详情 → 基本信息 → 测试号」里生成，它绑定当前登录账号，因此对我们自己的账号有效；
+云开发、部分需要正式主体的能力仍需正式 AppID（以微信官方说明为准）。
 
 > 只使用 `dsh-wechatide-mcp/bridge`、`/devtools`、`/render` 这三个子路径时不需要 DSH 宿主：
 > 它们只依赖 Node 内置模块（见[编程接口](#编程接口)）。
@@ -75,6 +100,9 @@ profile 的 `package.json` 里的 `dsh.profile.bundles` 数组，然后重启 DS
 
 ## 快速开始
 
+> 开工前先确认项目 `project.config.json` 里的 `appid` 是有效值（正式 AppID 或本账号的测试号）——
+> 见[AppID 前提](#前提小程序-appid-必须有效)。
+
 ```text
 1. wechatide_status      # CLI 在不在、IDE 起没起、登录态、本客户端是否已授权、IDE 有多少工具
 2. wechatide_connect     # 没授权就调它：IDE 弹「是否允许 DSH 访问」→ 点「允许」
@@ -97,7 +125,7 @@ profile 的 `package.json` 里的 `dsh.profile.bundles` 数组，然后重启 DS
 | `wechatide_connect` | `waitSeconds`（默认 `30`） | 授权本客户端并验证 MCP 桥接；返回 taskId 与桥接状态 |
 | `wechatide_tools` | `query`、`full`、`refresh` | 读实时工具清单；无参按族分组，`query` 查签名+描述，`full=true` 出完整参数 schema |
 | `wechatide_call` | `tool`（必填）、`args`、`project`、`timeoutMs` | 通用执行入口；`args` 是 JSON 对象字符串，缺 `project` 时自动填会话 cwd |
-| `wechatide_screenshot` | `project`、`waitForSelector`、`wait`、`path`、`raw`、`quality` | 模拟器截图；能力允许时附真实图像块，否则返回路径与原因 |
+| `wechatide_screenshot` | `project`、`waitForSelector`、`wait`、`path`、`raw`、`quality`、`matchDevice` | 模拟器截图，默认把像素对齐到当前机型宽高（`matchDevice=false` 保留 IDE 原尺寸）；能力允许时附真实图像块，否则返回路径与原因 |
 | `wechatide_logs` | `source`、`mode`、`pattern`、`project` | 读 console/network 缓冲区：`errors`（默认）/ `all` / `pattern`（grep -E） |
 
 典型调用：
@@ -105,7 +133,8 @@ profile 的 `package.json` 里的 `dsh.profile.bundles` 数组，然后重启 DS
 ```text
 wechatide_call(tool="open_project_window", project="/path/to/miniprogram")
 wechatide_call(tool="simulator_refresh")
-wechatide_screenshot(waitForSelector=".list")
+wechatide_screenshot(waitForSelector=".list")          # 输出即机型尺寸，如 390×844
+wechatide_screenshot(matchDevice=false)                # 保留 IDE 原始尺寸（长边 1300）
 wechatide_logs(source="network", mode="pattern", pattern="401|status")
 ```
 
@@ -123,6 +152,7 @@ wechatide_logs(source="network", mode="pattern", pattern="401|status")
     toolCallTimeoutMs: 90000    # 单次 tools/call 默认超时（上传/预览用 timeoutMs 覆盖）
     maxResultBytes: 6000        # 单条结果截断字节数
     imageBudget: 3              # 每会话最多附加几张截图（0 = 只给路径）
+    matchDevice: true           # 截图后把像素对齐到模拟器当前机型宽高
     exposeSkill: true           # 把内置 skill 发布到会话技能目录
 ```
 
@@ -134,6 +164,7 @@ wechatide_logs(source="network", mode="pattern", pattern="401|status")
 | `toolCallTimeoutMs` | `number` | `90000` | `tools/call` 默认超时（毫秒） |
 | `maxResultBytes` | `number` | `6000` | 渲染结果截断上限 |
 | `imageBudget` | `number` | `3` | 每会话图像块预算 |
+| `matchDevice` | `boolean` | `true` | 截图像素对齐到模拟器当前机型宽高（`false` = IDE 原尺寸） |
 | `exposeSkill` | `boolean` | `true` | 是否发布内置 skill |
 
 找不到 CLI 时也可以临时用环境变量指定（优先级低于 `binPath`，高于自动探测）：
@@ -151,7 +182,7 @@ export WECHAT_DEVTOOLS_CLI="/Applications/wechatwebdevtools.app/Contents/MacOS/w
 | `project window not found, open the project first` | 失败 + `remedy: … open_project_window …` |
 | `cant find runtimeid by projectpath …` | 失败 + 「先开窗、再 simulator_refresh」 |
 | `Cannot read properties of undefined (reading 'winId')` | 失败 + 「模拟器窗口不可用」 |
-| `APPID_ERROR` / `不存在此 AppID` | 失败 + 「换成本账号可管理的 AppID」 |
+| `APPID_ERROR` / `不存在此 AppID` | 失败 + 「换成本账号可管理的 AppID」；先核对 `project.config.json` 的 `appid`（见[AppID 前提](#前提小程序-appid-必须有效)） |
 | `MCP error -32602 … Invalid arguments` | 参数被拒 + 逐字段原因 + 「先 wechatide_tools(full=true)」 |
 | `Client authorization pending` | 未授权 + 「跑 wechatide_connect，去 IDE 弹窗点允许」 |
 | `loginExpired` / `not logged in` | 登录态过期 + 「重新授权或 wechatide_call(tool="login") 扫码」 |
@@ -226,7 +257,12 @@ node --import ./test/support/register.mjs scripts/e2e.mjs <项目>  # 开窗 →
 - 一个 IDE 只有一条 MCP 会话：动作串行执行（插件内部排队），不要指望并发操作两个页面。
 - IDE 工具都在 `wechatide_call` 之后：模型需先 `wechatide_tools` 发现名字与参数，这是省 token 的有意取舍。
 - 上传、发布、云写入与删除都是不可逆的外发动作：插件只负责如实执行与回报，是否执行由对话决定。
+- **AppID 无效时插件不做任何兜底**：不会替你切游客模式、也不会绕过开发者校验。截到
+  `APPID_ERROR` / `不存在此 AppID` 就是 AppID 或账号权限的问题，换成本账号可管理的正式
+  AppID 或测试号 AppID 再试，改代码没用。
 - 截图默认写入 IDE 的临时目录；需要固定路径时传 `path`。
+- 机型切换只能在 IDE 模拟器下拉里点：IDE 没有暴露「选择机型」的 MCP 工具，插件只负责读机型尺寸并归一化像素。
+- 归一化是「等比缩放到机型宽度 + 底部补/裁 ≤3px」，不是简单拉伸：画面不被压扁，代价是底部最多 3px 被裁或复用。
 - 工具清单与参数以 IDE 实际版本为准，本 README 不列举 IDE 的 40+ 个工具名。
 
 ## 相关
