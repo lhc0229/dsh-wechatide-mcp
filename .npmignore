@@ -1,0 +1,40 @@
+# npm 打包忽略清单（.npmignore）。
+#
+# 与 package.json 的 files 白名单不同，这里用「黑名单」：
+# 没被列出的文件都会进 tarball，所以新增目录时记得判断是否需要默认发布。
+
+# 版本控制、编辑器与系统文件
+.git/
+.github/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+*.swp
+*.swo
+*~
+
+# 依赖与本地缓存
+node_modules/
+.pnpm-store/
+.npm/
+.npmrc
+
+# 测试与构建产物
+coverage/
+.nyc_output/
+test-results/
+captures/
+tmp/
+.tmp/
+
+# 发布与调试产物
+*.tgz
+*.tar.gz
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# 本文件自身
+.npmignore

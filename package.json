@@ -1,0 +1,62 @@
+{
+  "name": "dsh-wechatide-mcp",
+  "version": "0.1.1",
+  "description": "WeChat DevTools (wechatide) MCP bridge for DeepSeek Harness: drives the IDE's own internal MCP server (wechatide mcp over stdio) — project open/import, compile, preview/upload, simulator screenshot, console/network logs, page automation and CloudBase — with authorization flow, live tool discovery and text-model-safe result rendering. 微信开发者工具内部 MCP 的 dsh 插件。",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "wechat",
+    "wechatide",
+    "miniprogram",
+    "devtools",
+    "automation"
+  ],
+  "type": "module",
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./bridge": "./lib/bridge.js",
+    "./devtools": "./lib/devtools.js",
+    "./render": "./lib/render.js",
+    "./package.json": "./package.json"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lhc0229/dsh-wechatide-mcp.git"
+  },
+  "homepage": "https://github.com/lhc0229/dsh-wechatide-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/lhc0229/dsh-wechatide-mcp/issues"
+  },
+  "scripts": {
+    "test": "node --import ./test/support/register.mjs --test test/*.test.js",
+    "smoke": "node --import ./test/support/register.mjs scripts/smoke.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": ">=0.1.0-rc.5",
+    "@deepseek-ai/schemastery": ">=3.18.0",
+    "@deepseek-ai/dsh-attachment": ">=0.1.0-rc.5"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    },
+    "@deepseek-ai/dsh-attachment": {
+      "optional": true
+    }
+  }
+}

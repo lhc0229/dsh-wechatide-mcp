@@ -1,0 +1,7 @@
+node_modules/
+.DS_Store
+*.log
+
+# 本机冒烟测试产生的临时输出
+captures/
+.idea/
